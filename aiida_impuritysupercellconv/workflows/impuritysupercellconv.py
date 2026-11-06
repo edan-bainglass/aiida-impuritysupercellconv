@@ -283,7 +283,7 @@ class IsolatedImpurityWorkChain(ProtocolMixin, WorkChain):
         spec.expose_inputs(
             PwRelaxWorkChain,
             namespace="relax",
-            exclude=("structure","base_final_scf"),
+            exclude=("structure",),
             namespace_options={
                 'required': False, 'populate_defaults':False,
                 'help': 'the preprocess relaxation step, if needed.',
@@ -420,7 +420,6 @@ class IsolatedImpurityWorkChain(ProtocolMixin, WorkChain):
                       },
                     },
             },
-            #"base_final_scf": {"pseudo_family": pseudo_family,},
             }
 
         overrides_pwscf = recursive_merge(overrides, overrides_all)
@@ -437,6 +436,7 @@ class IsolatedImpurityWorkChain(ProtocolMixin, WorkChain):
                     overrides=overrides_pwscf.get("base",None),
                     #overrides=overrides_pwscf,
                     pseudo_family=pseudo_family,
+                    options=options,
                     **kwargs,
                     )
             
@@ -455,15 +455,15 @@ class IsolatedImpurityWorkChain(ProtocolMixin, WorkChain):
                     overrides=overrides_pwscf.get("pre_relax",None),
                     pseudo_family=pseudo_family,
                     relax_type=RelaxType.POSITIONS, #Infinite dilute defect
+                    options=options,
                     **kwargs,
                     )
                     
             for k,v in builder_relax.items():        
                 setattr(builder.relax,k,v)   
             
-            builder.relax.pop('base_final_scf', None) 
             if not relax_unitcell:
-                builder.relax.base.pw.parameters = orm.Dict({})
+                builder.relax.base_relax.pw.parameters = orm.Dict({})
         
         # Setup MLIP pythonjob inputs if requested
         if ML_forces:
@@ -501,7 +501,7 @@ class IsolatedImpurityWorkChain(ProtocolMixin, WorkChain):
 
     def should_run_relax(self):
         if "relax" in self.inputs:
-            return len(self.inputs.relax.base.pw.parameters.get_dict()) > 0
+            return len(self.inputs.relax.base_relax.pw.parameters.get_dict()) > 0
         return False
     
     def should_run_mlip_forces(self):
@@ -513,9 +513,12 @@ class IsolatedImpurityWorkChain(ProtocolMixin, WorkChain):
 
         inputs = AttributeDict(self.exposed_inputs(PwRelaxWorkChain, namespace='relax'))
         inputs.structure = self.inputs.structure
-        inputs.base.pw.pseudos = get_pseudos(
+        pseudos = get_pseudos(
             inputs.structure, self.inputs.pseudo_family.value
         )
+        inputs.base_relax.pw.pseudos = pseudos
+        if "base_init_relax" in inputs:
+            inputs.base_init_relax.pw.pseudos = pseudos
         
         inputs.metadata.call_link_label = f'relax_step'
 
@@ -720,20 +723,9 @@ def recursive_consistency_check(input_dict):
     unconsistency_sentence = ''
     
     if "relax" in parameters :
-        if len(parameters["relax"]["base"]["pw"]["parameters"].get_dict()) > 0:
-            if parameters["relax"]["base"]["pw"]["parameters"].get_dict()["CONTROL"]["calculation"] != 'relax':
-                unconsistency_sentence+=f'Checking inputs.impuritysupercellconv.relax.base.pw.parameters.CONTROL.calculation: can be only "relax". No cell relaxation should be performed.'
-            
-            
-            if 'base_final_scf' in parameters['relax']:
-                if parameters['relax']['base_final_scf'] ==  {'metadata': {}, 'pw': {'metadata': {'options': {'stash': {}}}, 'monitors': {}, 'pseudos': {}}}:
-                    pass
-                elif parameters['relax']['base_final_scf'] ==  {}:
-                    pass
-                else:
-                    unconsistency_sentence+=f'Checking inputs.impuritysupercellconv.relax.base_final_scf: should not be set, the final scf after relaxation is not supported in the MusConvWorkChain.'
-    
-    
+        if len(parameters["relax"]["base_relax"]["pw"]["parameters"].get_dict()) > 0:
+            if parameters["relax"]["base_relax"]["pw"]["parameters"].get_dict()["CONTROL"]["calculation"] != 'relax':
+                unconsistency_sentence+=f'Checking inputs.impuritysupercellconv.relax.base_relax.pw.parameters.CONTROL.calculation: can be only "relax". No cell relaxation should be performed.'
     
     value_input_pwscf = iterdict(parameters["pwscf"]["pw"]["parameters"].get_dict(),'tprnfor')
     value_overrides = True
